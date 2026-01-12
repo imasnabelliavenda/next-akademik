@@ -2,10 +2,65 @@
 
 import { useEffect, useState } from 'react';
 
-export default function Home() {
-  const [dosen, setDosen] = useState([]);
+const GRAPHQL_ENDPOINT = 'http://localhost:1337/graphql';
+
+// GraphQL Queries
+const GET_ALL_DOSEN = `
+  query GetAllDosen {
+    dosens(pagination: { limit: 100 }) {
+      documentId
+      nidn
+      nama
+      email
+      telepon
+      jabatan
+      prodi {
+        kode_prodi
+        nama_prodi
+      }
+    }
+  }
+`;
+
+const CREATE_DOSEN_MUTATION = `
+  mutation CreateDosen($data: DosenInput!) {
+    createDosen(data: $data) {
+      documentId
+      nidn
+      nama
+      email
+      telepon
+      jabatan
+    }
+  }
+`;
+
+const UPDATE_DOSEN_MUTATION = `
+  mutation UpdateDosen($documentId: ID!, $data: DosenInput!) {
+    updateDosen(documentId: $documentId, data: $data) {
+      documentId
+      nidn
+      nama
+      email
+      telepon
+      jabatan
+    }
+  }
+`;
+
+const DELETE_DOSEN_MUTATION = `
+  mutation DeleteDosen($documentId: ID!) {
+    deleteDosen(documentId: $documentId) {
+      documentId
+    }
+  }
+`;
+
+export default function DosenGraphQLPage() {
+  const [dosenList, setDosenList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
   const [selectedDosen, setSelectedDosen] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -22,37 +77,62 @@ export default function Home() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const fetchDosen = () => {
-    setLoading(true);
-    fetch('http://localhost:1337/api/dosens')
-      .then(response => {
-        if (!response.ok) {
-          throw new Error('Failed to fetch data');
-        }
-        return response.json();
-      })
-      .then(data => {
-        setDosen(data.data);
-        setLoading(false);
-      })
-      .catch(err => {
-        setError(err.message);
-        setLoading(false);
+  const graphqlRequest = async (query, variables = {}) => {
+    try {
+      const response = await fetch(GRAPHQL_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          variables
+        }),
       });
+
+      const result = await response.json();
+
+      if (result.errors) {
+        throw new Error(result.errors[0].message);
+      }
+
+      return result.data;
+    } catch (err) {
+      throw new Error(err.message);
+    }
+  };
+
+  const fetchDosen = async () => {
+    setLoading(true);
+    try {
+      const data = await graphqlRequest(GET_ALL_DOSEN);
+
+      // 1️⃣ TANPA EKSTRAKSI (RAW RESPONSE)
+      console.group('GRAPHQL RAW RESPONSE (Tanpa Ekstraksi)');
+      console.log(data);
+      console.groupEnd();
+      
+      // 2️⃣ DENGAN EKSTRAKSI
+      console.group('GRAPHQL RESPONSE (Dengan Ekstraksi)');
+      console.log(data.dosens);
+      console.groupEnd();
+
+      // RELATIONAL FILED TANPA ATTRIBUTES
+      console.group('Relational Field Tanpa attributes');
+      console.log(data.dosens);
+      console.groupEnd();
+
+      setDosenList(data.dosens || []);
+      setLoading(false);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     fetchDosen();
   }, []);
-
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('id-ID', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-  };
 
   const handleViewDetail = (dos) => {
     setSelectedDosen(dos);
@@ -79,39 +159,24 @@ export default function Home() {
   };
 
   const handleSaveCreate = async (e) => {
-  e.preventDefault();
-  setSaving(true);
+    e.preventDefault();
+    setSaving(true);
 
-  try {
-    const response = await fetch('http://localhost:1337/api/dosens', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        data: {
-            nidn: createFormData.nidn,
-            nama: createFormData.nama,
-            email: createFormData.email,
-            telepon: createFormData.telepon,
-            jabatan: createFormData.jabatan
-        }
-      })
-    });
+    try {
+      const formattedData = {
+        ...createFormData,
+        publishedAt: new Date().toISOString(),
+      };
 
-    const result = await response.json();
-      console.log('CREATE RESPONSE:', result);
-
-      if (!response.ok) {
-        throw new Error(result.error?.message || 'Create gagal');
-      }
+      await graphqlRequest(CREATE_DOSEN_MUTATION, {
+        data: formattedData
+      });
 
       alert('Data berhasil ditambahkan!');
       setShowCreateModal(false);
       fetchDosen();
     } catch (err) {
-      console.error(err);
-      alert(err.message);
+      alert(`Error: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -119,13 +184,12 @@ export default function Home() {
 
   const handleEdit = (dos) => {
     setEditFormData({
-      id: dos.id,
       documentId: dos.documentId,
-      nidn: dos.nidn,
-      nama: dos.nama,
-      email: dos.email,
-      telepon: dos.telepon,
-      jabatan: dos.jabatan
+      nidn: dos.nidn || '',
+      nama: dos.nama || '',
+      email: dos.email || '',
+      telepon: dos.telepon || '',
+      jabatan: dos.jabatan || ''
     });
     setShowEditModal(true);
     setShowDetailModal(false);
@@ -144,25 +208,15 @@ export default function Home() {
     setSaving(true);
 
     try {
-      const response = await fetch(`http://localhost:1337/api/dosens/${editFormData.documentId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          data: {
-            nidn: editFormData.nidn,
-            nama: editFormData.nama,
-            email: editFormData.email,
-            telepon: editFormData.telepon,
-            jabatan: editFormData.jabatan
-          }
-        })
-      });
+      const formattedData = {
+        ...editFormData
+      };
+      delete formattedData.documentId; 
 
-      if (!response.ok) {
-        throw new Error('Failed to update data');
-      }
+      await graphqlRequest(UPDATE_DOSEN_MUTATION, {
+        // documentId: editFormData.documentId,
+        data: formattedData
+      });
 
       alert('Data berhasil diupdate!');
       setShowEditModal(false);
@@ -184,13 +238,9 @@ export default function Home() {
     if (!deleteTarget) return;
 
     try {
-      const response = await fetch(`http://localhost:1337/api/dosens/${deleteTarget.documentId}`, {
-        method: 'DELETE',
+      await graphqlRequest(DELETE_DOSEN_MUTATION, {
+        // documentId: deleteTarget.documentId
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete data');
-      }
 
       alert('Data berhasil dihapus!');
       setShowDeleteModal(false);
@@ -229,13 +279,19 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-12 px-4">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden">
+
           {/* Header */}
-          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-6 flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-white">Data Dosen</h1>
-              <p className="text-blue-100 mt-2">Daftar dosen terdaftar</p>
+          <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-8 py-6 flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <div>
+                <h1 className="text-3xl font-bold text-white">Data Dosen (GraphQL)</h1>
+                <p className="text-purple-100 mt-1">CRUD dosen menggunakan GraphQL</p>
+              </div>
             </div>
             <button
               onClick={handleCreate}
@@ -250,47 +306,99 @@ export default function Home() {
 
           {/* Content */}
           <div className="p-8">
+            {/* Loading State */}
             {loading && (
-              <div className="flex justify-center items-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+              <div className="flex flex-col items-center justify-center py-16">
+                <div className="animate-spin rounded-full h-16 w-16 border-4 border-purple-200 border-t-purple-600 mb-4"></div>
+                <p className="text-gray-500 dark:text-gray-400 animate-pulse">Memuat data...</p>
               </div>
             )}
 
+            {/* Error State */}
             {error && (
-              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-red-700 dark:text-red-400">
-                <p className="font-semibold">Error:</p>
-                <p>{error}</p>
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6">
+                <div className="flex items-start gap-4">
+                  <svg className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <h3 className="font-semibold text-red-700 dark:text-red-400">Error</h3>
+                    <p className="text-red-600 dark:text-red-300 mt-1">{error}</p>
+                    <button
+                      onClick={fetchDosen}
+                      className="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      Coba Lagi
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
+            {/* Data Table */}
             {!loading && !error && (
-              <div className="overflow-x-auto">
+              <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b-2 border-gray-200 dark:border-gray-700">
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300">No</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300">NIDN</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300">Nama</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300">Email</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300">Telepon</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300">Jabatan</th>
-                      <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 dark:text-gray-300">Aksi</th>
+                    <tr className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-700/50">
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                        No
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                        NIDN
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                        Nama Dosen
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                        Jabatan
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                        Email
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                        Aksi
+                      </th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {dosen.map((dos, index) => (
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                    {dosenList.map((dos, index) => (
                       <tr
-                        key={dos.id}
-                        className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                        key={dos.documentId}
+                        className="hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-colors duration-200"
                       >
-                        <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{index + 1}</td>
-                        <td className="px-4 py-4 text-sm font-medium text-gray-900 dark:text-gray-100">{dos.nidn}</td>
-                        <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{dos.nama}</td>
-                        <td className="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">{dos.email}</td>
-                        <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">{dos.telepon}</td>
-                        <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">{dos.jabatan}</td>
-                        <td className="px-4 py-4 text-sm">
-                          <div className="flex gap-2 justify-center">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-bold text-sm">
+                            {index + 1}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="inline-flex items-center px-3 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 font-mono text-sm font-medium">
+                            {dos.nidn || '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-indigo-500 flex items-center justify-center text-white font-bold text-sm shadow-lg">
+                              {dos.nama ? dos.nama.charAt(0).toUpperCase() : '?'}
+                            </div>
+                            <span className="text-gray-900 dark:text-gray-100 font-medium">
+                              {dos.nama || '-'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="text-gray-900 dark:text-gray-100 font-medium">
+                            {dos.jabatan || '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="text-gray-600 dark:text-gray-400 text-sm">
+                            {dos.email || '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex gap-2">
                             <button
                               onClick={() => handleViewDetail(dos)}
                               className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors"
@@ -319,9 +427,14 @@ export default function Home() {
                   </tbody>
                 </table>
 
-                {dosen.length === 0 && (
-                  <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-                    Tidak ada data dosen
+                {/* Empty State */}
+                {dosenList.length === 0 && (
+                  <div className="text-center py-16">
+                    <svg className="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    <p className="text-gray-500 dark:text-gray-400 text-lg">Tidak ada data dosen</p>
+                    <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">Belum ada dosen yang terdaftar dalam sistem</p>
                   </div>
                 )}
               </div>
@@ -329,13 +442,99 @@ export default function Home() {
           </div>
 
           {/* Footer */}
-          {!loading && !error && dosen.length > 0 && (
-            <div className="bg-gray-50 dark:bg-gray-700/50 px-8 py-4 border-t border-gray-200 dark:border-gray-700">
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Total: <span className="font-semibold text-gray-900 dark:text-gray-100">{dosen.length}</span> dosen
-              </p>
+          {!loading && !error && dosenList.length > 0 && (
+            <div className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-700/50 dark:to-gray-700 px-8 py-4 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Menampilkan <span className="font-bold text-purple-600 dark:text-purple-400">{dosenList.length}</span> data dosen
+                </p>
+                <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    GraphQL API
+                  </span>
+                </div>
+              </div>
             </div>
           )}
+        </div>
+
+        {/* GraphQL Query Info Card */}
+        <div className="mt-6 bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700">
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+            <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            GraphQL Queries & Mutations
+          </h3>
+          <div className="space-y-4">
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Query (Read):</h4>
+              <pre className="bg-gray-900 dark:bg-gray-950 rounded-lg p-4 overflow-x-auto">
+                <code className="text-sm text-green-400 font-mono">
+                  {`query GetAllDosen {
+  dosens {
+    documentId
+    nidn
+    nama
+    email
+    telepon
+    jabatan
+  }
+}`}
+                </code>
+              </pre>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Mutation (Create):</h4>
+              <pre className="bg-gray-900 dark:bg-gray-950 rounded-lg p-4 overflow-x-auto">
+                <code className="text-sm text-blue-400 font-mono">
+                  {`mutation CreateDosen($data: DosenInput!) {
+  createDosen(data: $data) {
+    documentId
+    nidn
+    nama
+    email
+    telepon
+    jabatan
+  }
+}`}
+                </code>
+              </pre>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Mutation (Update):</h4>
+              <pre className="bg-gray-900 dark:bg-gray-950 rounded-lg p-4 overflow-x-auto">
+                <code className="text-sm text-blue-400 font-mono">
+                  {` mutation UpdateDosen($documentId: ID!, $data: DosenInput!) {
+  updateDosen(documentId: $documentId, data: $data) {
+    documentId
+    nidn
+    nama
+    email
+    telepon
+    jabatan
+  }
+}`}
+                </code>
+              </pre>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Mutation (Delete):</h4>
+              <pre className="bg-gray-900 dark:bg-gray-950 rounded-lg p-4 overflow-x-auto">
+                <code className="text-sm text-blue-400 font-mono">
+                  {`mutation DeleteDosen($documentId: ID!) {
+  deleteDosen(documentId: $documentId) {
+    documentId
+  }
+}`}
+                </code>
+              </pre>
+            </div>
+          </div>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            Endpoint: <code className="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-xs">{GRAPHQL_ENDPOINT}</code>
+          </p>
         </div>
       </div>
 
@@ -344,7 +543,7 @@ export default function Home() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 flex justify-between items-center sticky top-0">
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-4 flex justify-between items-center sticky top-0">
               <h2 className="text-2xl font-bold text-white">Detail Dosen</h2>
               <button
                 onClick={closeModal}
@@ -374,7 +573,7 @@ export default function Home() {
                   <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{selectedDosen.email}</p>
                 </div>
 
-                <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg md:col-span-2">
+                <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">No Telepon</p>
                   <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{selectedDosen.telepon}</p>
                 </div>
@@ -393,14 +592,6 @@ export default function Home() {
                     <span className="text-gray-500 dark:text-gray-400">Document ID:</span>
                     <span className="text-gray-900 dark:text-gray-100 font-mono text-xs">{selectedDosen.documentId}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500 dark:text-gray-400">Dibuat:</span>
-                    <span className="text-gray-900 dark:text-gray-100">{formatDate(selectedDosen.createdAt)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500 dark:text-gray-400">Diupdate:</span>
-                    <span className="text-gray-900 dark:text-gray-100">{formatDate(selectedDosen.updatedAt)}</span>
-                  </div>
                 </div>
               </div>
             </div>
@@ -418,7 +609,7 @@ export default function Home() {
                   closeModal();
                   handleEdit(selectedDosen);
                 }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
               >
                 Edit Data
               </button>
@@ -493,8 +684,8 @@ export default function Home() {
                   />
                 </div>
 
-                {/* No Telp */}
-                <div className="md:col-span-2">
+                {/* Telepon */}
+                <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     No Telepon <span className="text-red-500">*</span>
                   </label>
@@ -575,14 +766,14 @@ export default function Home() {
             {/* Modal Content - Form */}
             <form onSubmit={handleSaveCreate} className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* NIM */}
+                {/* NIDN */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     NIDN <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
-                    name="nim"
+                    name="nidn"
                     value={createFormData.nidn}
                     onChange={handleCreateFormChange}
                     required
@@ -607,22 +798,6 @@ export default function Home() {
                   />
                 </div>
 
-                {/* Jabatan */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Jabatan <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="jabatan"
-                    value={createFormData.jabatan}
-                    onChange={handleCreateFormChange}
-                    required
-                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                    placeholder="Masukkan jabatan"
-                  />
-                </div>
-
                 {/* Email */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -639,7 +814,7 @@ export default function Home() {
                   />
                 </div>
 
-                {/* Telp */}
+                {/* Telepon */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     No Telepon <span className="text-red-500">*</span>
@@ -651,7 +826,23 @@ export default function Home() {
                     onChange={handleCreateFormChange}
                     required
                     className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                    placeholder="contoh@email.com"
+                    placeholder="081234567890"
+                  />
+                </div>
+
+                {/* Jabatan */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Jabatan <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="jabatan"
+                    value={createFormData.jabatan}
+                    onChange={handleCreateFormChange}
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                    placeholder="Masukkan jabatan (Contoh: Dosen Tetap)"
                   />
                 </div>
               </div>
